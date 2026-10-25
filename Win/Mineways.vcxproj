@@ -196,6 +196,7 @@
     <ClInclude Include="MinewaysMap.h" />
     <ClInclude Include="nbt.h" />
     <ClInclude Include="ObjFileManip.h" />
+    <ClInclude Include="ThickPlants.inc" />
     <ClInclude Include="PublishSkfb.h" />
     <ClInclude Include="region.h" />
     <ClInclude Include="Resource.h" />

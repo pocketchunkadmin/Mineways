@@ -424,6 +424,7 @@ INT_PTR CALLBACK ExportPrint(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
 
         CheckDlgButton(hDlg, IDC_EXPORT_ALL, epd.chkExportAll);
         CheckDlgButton(hDlg, IDC_FATTEN, epd.chkExportAll ? epd.chkFatten : BST_INDETERMINATE);
+        CheckDlgButton(hDlg, IDC_THICK_PLANTS, epd.plantThickness > 0.0f);
 
         BOOL debugAvailable = !epd.radioExportNoMaterials[epd.fileType] && (epd.fileType != FILE_TYPE_ASCII_STL) && (epd.fileType != FILE_TYPE_SCHEMATIC) && (epd.fileType != FILE_TYPE_SPONGE_SCHEMATIC);
 
@@ -1429,6 +1430,9 @@ INT_PTR CALLBACK ExportPrint(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
 
             lepd.chkExportAll = (IsDlgButtonChecked(hDlg, IDC_EXPORT_ALL) == BST_CHECKED);
             lepd.chkFatten = lepd.chkExportAll ? (IsDlgButtonChecked(hDlg, IDC_FATTEN) == BST_CHECKED) : 0;
+            // checked: keep a thickness a script set, else one pixel
+            lepd.plantThickness = (IsDlgButtonChecked(hDlg, IDC_THICK_PLANTS) == BST_CHECKED) ?
+                ((epd.plantThickness > 0.0f) ? epd.plantThickness : 1.0f) : 0.0f;
 
             BOOL debugAvailable = !lepd.radioExportNoMaterials[lepd.fileType] && (lepd.fileType != FILE_TYPE_ASCII_STL);
             lepd.chkShowParts = debugAvailable ? (IsDlgButtonChecked(hDlg, IDC_SHOW_PARTS) == BST_CHECKED) : 0;

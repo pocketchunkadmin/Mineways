@@ -334,6 +334,10 @@ typedef struct ExportFileData
     UINT chkMergeFlattop;
     UINT chkExportAll;
     UINT chkFatten;
+    // "Thick plants": crossed plants (grass, flowers, saplings...) and other flat billboards get this depth, in pixels
+    // (1/16 of a block); 0 = flat, as before. Needs texture images. In the 3D print export they, and the block models
+    // printed with them, are saved as closed solids.
+    float plantThickness;
     UINT chkMakeZUp[FILE_TYPE_TOTAL];
 
     UINT radioRotate0;

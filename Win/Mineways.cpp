@@ -7953,6 +7953,19 @@ static int interpretImportLine(char* line, ImportedSet& is)
         return INTERPRETER_FOUND_VALID_EXPORT_LINE;
     }
 
+    strPtr = findLineDataNoCase(line, "Thick plants:");
+    if (strPtr != NULL) {
+        if (1 != sscanf_s(strPtr, "%s", string1, (unsigned)_countof(string1)))
+        {
+            saveErrorMessage(is, L"could not find boolean value for 'Thick plants' command."); return INTERPRETER_FOUND_ERROR;
+        }
+        if (!validBoolean(is, string1)) return INTERPRETER_FOUND_ERROR;
+
+        if (is.processData)
+            is.pEFD->plantThickness = interpretBoolean(string1) ? 1.0f : 0.0f;
+        return INTERPRETER_FOUND_VALID_EXPORT_LINE;
+    }
+
     strPtr = findLineDataNoCase(line, "Fatten lesser blocks:");
     if (strPtr != NULL) {
         if (1 != sscanf_s(strPtr, "%s", string1, (unsigned)_countof(string1)))

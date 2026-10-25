@@ -832,6 +832,14 @@ static float getRand3to1(int boxIndex);
 
 static bool fenceNeighbor(int type, int boxIndex, int blockSide);
 static int saveBillboardOrGeometry(int boxIndex, int type);
+// "Thick plants" (ThickPlants.inc): crossed plants saved as solids in the 3D print export
+static bool isPrintPlant(int type);
+static void clampPlantVertices(int boxIndex, int firstVertex);
+// ... and block models printed as closed voxel solids
+static void noteVoxelBox(int firstVertex);
+static bool voxelBitsOn();
+static bool isVoxelBit(int type);
+static int saveVoxelBit(int boxIndex, int type);
 static int saveTriangleGeometry(int type, int dataVal, int boxIndex, int typeBelow, int dataValBelow, int boxIndexBelow, int choppedSide);
 static bool badNeighborTest(int& neighborIndex, int boxIndex, int offset);
 static unsigned int getStairMask(int boxIndex, int dataVal);
@@ -3466,7 +3474,9 @@ static int filterBox(ChangeBlockCommand* pCBC)
 
                     // check if it's something to be filtered out: not in the output list,
                     // alpha is 0, or the active Culling Scheme hides this (type, dataVal).
-                    if (!(flags & gModel.options->saveFilterFlags) ||
+                    // plants isPrintPlant() saves as solids must survive the print filter
+                    // even when they carry no print save flag (pointed dripstone has none).
+                    if ((!(flags & gModel.options->saveFilterFlags) && !isPrintPlant(gBoxData[boxIndex].type) && !isVoxelBit(gBoxData[boxIndex].type)) ||  // and voxel solids
                         gBlockDefinitions[gBoxData[boxIndex].type].alpha <= 0.0 ||
                         isBlockCulled(gBoxData[boxIndex].type, gBoxData[boxIndex].data)) {
                         // things that should not be saved should be gone, gone, gone, no trace left
@@ -3569,17 +3579,20 @@ static int filterBox(ChangeBlockCommand* pCBC)
                         int flags = gBlockDefinitions[type].flags;
                         // check: is it a billboard we can export? Clear it out if so.
                         int blockProcessed = 0;
-                        if (gExportBillboards)	// same as gModel.options->pEFD->chkExportAll
+                        if (gExportBillboards || isPrintPlant(type))	// same as gModel.options->pEFD->chkExportAll
                         {
                             // Export billboards or flattenable geometry, only. So test by export flags,
                             // and also test if it's a billboard or flattenable thing.
                             // TODO: Should any blocks that are bits get used to note connected objects,
                             // so that floaters are not deleted? Probably... but we don't try to test.
-                            if ((flags & outputFlags) && (flags & (BLF_BILLBOARD | BLF_SMALL_BILLBOARD | BLF_FLATTEN | BLF_FLATTEN_SMALL)))
+                            if (((flags & outputFlags) || isPrintPlant(type)) && (flags & (BLF_BILLBOARD | BLF_SMALL_BILLBOARD | BLF_FLATTEN | BLF_FLATTEN_SMALL)))
                             {
                                 // tricksy code: if the return value > 1, then it's an error
                                 // and should be treated as such.
+                                const int plantFirstVertex = gModel.vertexCount;  // see clampPlantVertices
                                 retVal = saveBillboardOrGeometry(boxIndex, type);
+                                if (retVal == 1 && isPrintPlant(type))
+                                    clampPlantVertices(boxIndex, plantFirstVertex);
                                 if (retVal == 1)
                                 {
                                     // successfully saved a billboard or flattenable geometry, e.g. a flower, carpet, or cushion - count it just once
@@ -3607,7 +3620,7 @@ static int filterBox(ChangeBlockCommand* pCBC)
                         }
 
                         // not filtered out by the basics or billboard, so try to flatten
-                        if (!blockProcessed && flatten && (flags & (BLF_FLATTEN | BLF_FLATTEN_SMALL)))
+                        if (!blockProcessed && flatten && (flags & (BLF_FLATTEN | BLF_FLATTEN_SMALL)) && !isVoxelBit(type))  // voxel solids below
                         {
                             // this block is redstone, a rail, a ladder, etc. - shove its face to the top of the next cell down,
                             // or to its neighbor, or both (depends on dataval),
@@ -3648,7 +3661,7 @@ static int filterBox(ChangeBlockCommand* pCBC)
         }
 
         // check for other lesser geometry, which could have faces that have something flattened onto them 
-        if (gExportBillboards)	// same as gModel.options->pEFD->chkExportAll
+        if (gExportBillboards || voxelBitsOn())	// same as gModel.options->pEFD->chkExportAll; or voxel solids
         {
             for (x = gSolidBox.min[X]; x <= gSolidBox.max[X]; x++)
             {
@@ -3668,9 +3681,13 @@ static int filterBox(ChangeBlockCommand* pCBC)
                             // on the assumption that the software can merge the data properly with the solid model.
                             // TODO: Should any blocks that are bits get used to note connected objects,
                             // so that floaters are not deleted? Probably... but we don't try to test.
-                            if (flags & outputFlags)
+                            if ((gExportBillboards && (flags & outputFlags)) || isVoxelBit(type))
                             {
-                                retVal = saveBillboardOrGeometry(boxIndex, type);
+                                const int plantFirstVertex = gModel.vertexCount;  // see clampPlantVertices
+                                // in the print export, models are saved as closed voxel solids
+                                retVal = (!gExportBillboards && isVoxelBit(type)) ? saveVoxelBit(boxIndex, type) : saveBillboardOrGeometry(boxIndex, type);
+                                if (retVal == 1 && isPrintPlant(type))
+                                    clampPlantVertices(boxIndex, plantFirstVertex);
                                 if (retVal == 1)
                                 {
                                     // successfully saved minor geometry - count it just once
@@ -17246,6 +17263,7 @@ static int saveBoxAlltileGeometry(int boxIndex, int type, int dataVal, int swatc
     {
         // normal case: make vertices
         startVertexIndex = gModel.vertexCount;
+        noteVoxelBox(startVertexIndex);  // ThickPlants.inc
 
         // box value - compute now. Used for billboard output and adding to bounds (e.g., the torch doesn't actually output anything here,
         // but is still considered a billboard - I forget why...).
@@ -17614,6 +17632,7 @@ static int saveBoxCustomUVVertices(int boxIndex, float minPixX, float maxPixX, f
 {
     IPoint anchor;
     int startVertexIndex = gModel.vertexCount;
+    noteVoxelBox(startVertexIndex);  // ThickPlants.inc
 
     boxIndexToLoc(anchor, gModel.instancing ? 0 : boxIndex);
 
@@ -18731,6 +18750,9 @@ static int saveBillboardFaces(int boxIndex, int type, int billboardType)
     return saveBillboardFacesExtraData(boxIndex, type, billboardType, gBoxData[boxIndex].data, 1, false);
 }
 
+// "Thick plants" export option: crossed plants with depth, and solids for the 3D print export
+#include "ThickPlants.inc"
+
 static int saveBillboardFacesExtraData(int boxIndex, int type, int billboardType, int dataVal, int firstFace, bool dontWobbleOverride /*= false*/)
 {
     int i, j, fc, swatchLoc;  // cppcheck-suppress 398
@@ -18770,7 +18792,7 @@ static int saveBillboardFacesExtraData(int boxIndex, int type, int billboardType
     bool singleSided = (gBlockDefinitions[type].flags & BLF_EMITTER) ? gModel.emitterSingleSided : gModel.singleSided;
     int rotateIndex;
 
-    assert(!gModel.print3D);
+    assert(!gModel.print3D || printPlantsOn());  // print mode saves crossed plants here as solids
 
     swatchLoc = TILE_TO_SWATCH(gBlockDefinitions[type].txrX, gBlockDefinitions[type].txrY);
 
@@ -19424,6 +19446,12 @@ static int saveBillboardFacesExtraData(int boxIndex, int type, int billboardType
         wobbleIt = false;
         shiftX = shiftY = 0.0f;
     }
+    // plants printed as solids stay where they grow - the wobble would push a plant at the
+    // edge of the selection out of the printed box (ThickPlants.inc)
+    if (wobbleIt && isPrintPlant(type)) {
+        wobbleIt = false;
+        shiftX = shiftZ = 0.0f;
+    }
     if (wobbleIt || yShift) {
         gUsingTransform = 1;
         metaVertexCount = gModel.vertexCount;
@@ -19985,6 +20013,16 @@ static int saveBillboardFacesExtraData(int boxIndex, int type, int billboardType
 
         bool normalUnknown = ((billboardType == BB_TORCH) || (billboardType == BB_FIRE) || foundSunflowerTop);
 
+        // crossed planes given thickness replace the flat faces below (in print mode,
+        // the sunflower head's half-height crossed planes too - its flat head quad is skipped there);
+        // the other flat billboards (crop grids, coral fans, vines, ladders, lily pads, rails) too
+        if (thickPlantsOn() && ((billboardType == BB_FULL_CROSS && (!foundSunflowerTop || printPlantsOn())) ||
+            (billboardType != BB_FULL_CROSS && isThickPlanar(billboardType)))) {
+            retCode |= saveThickCross(type, getSignificantMaterial(type, origDataVal), swatchLoc, anchor, vertexOffsets, faceCount / 2, firstFace);
+            if (retCode >= MW_BEGIN_ERRORS) return retCode;
+            faceCount = 0;
+        }
+
         for (i = 0; i < faceCount; i++)
         {
             // torches are 4 sides facing out: don't output 8 sides
@@ -20205,7 +20243,7 @@ static int saveBillboardFacesExtraData(int boxIndex, int type, int billboardType
         }
     }
     // check for sunflower
-    else if (foundSunflowerTop)
+    else if (foundSunflowerTop && !printPlantsOn())  // in print mode the solid half-height crosses are the head
     {
         // Add the sunflower head, as Minecraft's sunflower_top model has it: a flat element at X = 9.6 pixels, from -1 to 15 in Y and
         // 1 to 15 in Z, with the back on its west face and the front on its east, turned 22.5 degrees about Z (tilting the front up
@@ -39655,6 +39693,8 @@ static int writeStatistics(HANDLE fh, int (*printFunc)(char *), WorldGuide* pWor
         sprintf_s(outputString, 256, "# Fatten lesser blocks: %s\n", gModel.options->pEFD->chkFatten ? "YES" : "no");
         WRITE_STAT;
     }
+    sprintf_s(outputString, 256, "# Thick plants: %s\n", gModel.options->pEFD->plantThickness > 0.0f ? "YES" : "no");
+    WRITE_STAT;
 
     // option only available when rendering
     if (!gModel.print3D)
